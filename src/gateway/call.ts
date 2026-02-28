@@ -6,8 +6,11 @@ import {
   resolveGatewayPort,
   resolveStateDir,
 } from "../config/config.js";
+import { resolveSecretInputRef } from "../config/types.secrets.js";
 import { loadOrCreateDeviceIdentity } from "../infra/device-identity.js";
 import { loadGatewayTlsRuntime } from "../infra/tls/gateway.js";
+import { secretRefKey } from "../secrets/ref-contract.js";
+import { resolveSecretRefValues } from "../secrets/resolve.js";
 import {
   GATEWAY_CLIENT_MODES,
   GATEWAY_CLIENT_NAMES,
@@ -241,12 +244,52 @@ function ensureRemoteModeUrlConfigured(context: ResolvedGatewayCallContext): voi
   );
 }
 
-function resolveGatewayCredentials(context: ResolvedGatewayCallContext): {
+async function resolveGatewaySecretInputString(params: {
+  config: OpenClawConfig;
+  value: unknown;
+  path: string;
+}): Promise<string | undefined> {
+  const defaults = params.config.secrets?.defaults;
+  const { ref } = resolveSecretInputRef({
+    value: params.value,
+    defaults,
+  });
+  if (!ref) {
+    return trimToUndefined(params.value);
+  }
+  const resolved = await resolveSecretRefValues([ref], {
+    config: params.config,
+    env: process.env,
+  });
+  const resolvedValue = trimToUndefined(resolved.get(secretRefKey(ref)));
+  if (!resolvedValue) {
+    throw new Error(`${params.path} resolved to an empty or non-string value.`);
+  }
+  return resolvedValue;
+}
+
+async function resolveGatewayCredentials(context: ResolvedGatewayCallContext): Promise<{
   token?: string;
   password?: string;
-} {
+}> {
+  let resolvedConfig = context.config;
+  const auth = context.config.gateway?.auth;
+  if (
+    auth &&
+    resolveSecretInputRef({ value: auth.password, defaults: context.config.secrets?.defaults }).ref
+  ) {
+    resolvedConfig = structuredClone(context.config);
+    const resolvedPassword = await resolveGatewaySecretInputString({
+      config: resolvedConfig,
+      value: resolvedConfig.gateway?.auth?.password,
+      path: "gateway.auth.password",
+    });
+    if (resolvedConfig.gateway?.auth) {
+      resolvedConfig.gateway.auth.password = resolvedPassword;
+    }
+  }
   return resolveGatewayCredentialsFromConfig({
-    cfg: context.config,
+    cfg: resolvedConfig,
     env: process.env,
     explicitAuth: context.explicitAuth,
     urlOverride: context.urlOverride,
@@ -398,7 +441,7 @@ async function callGatewayWithScopes<T = Record<string, unknown>>(
   });
   const url = connectionDetails.url;
   const tlsFingerprint = await resolveGatewayTlsFingerprint({ opts, context, url });
-  const { token, password } = resolveGatewayCredentials(context);
+  const { token, password } = await resolveGatewayCredentials(context);
   return await executeGatewayRequestWithScopes<T>({
     opts,
     scopes,
