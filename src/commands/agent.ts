@@ -304,6 +304,7 @@ function runAgentAttempt(params: {
     model: params.modelOverride,
     authProfileId,
     authProfileIdSource: authProfileId ? params.sessionEntry?.authProfileOverrideSource : undefined,
+    anthropicApiKeyOverride: params.opts.anthropicApiKeyOverride,
     thinkLevel: params.resolvedThinkLevel,
     verboseLevel: params.resolvedVerboseLevel,
     timeoutMs: params.timeoutMs,

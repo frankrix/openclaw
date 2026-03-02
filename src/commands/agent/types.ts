@@ -36,6 +36,8 @@ export type AgentCommandOpts = {
   clientTools?: ClientToolDefinition[];
   /** Agent id override (must exist in config). */
   agentId?: string;
+  /** API key override for BYOK (Bring Your Own Key) - bypasses normal auth resolution. */
+  anthropicApiKeyOverride?: string;
   to?: string;
   sessionId?: string;
   sessionKey?: string;

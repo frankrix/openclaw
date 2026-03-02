@@ -73,6 +73,8 @@ export type RunEmbeddedPiAgentParams = {
   model?: string;
   authProfileId?: string;
   authProfileIdSource?: "auto" | "user";
+  /** API key override for BYOK (Bring Your Own Key) - bypasses normal auth resolution. */
+  anthropicApiKeyOverride?: string;
   thinkLevel?: ThinkLevel;
   verboseLevel?: VerboseLevel;
   reasoningLevel?: ReasoningLevel;

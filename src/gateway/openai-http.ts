@@ -45,6 +45,7 @@ function buildAgentCommandInput(params: {
   prompt: { message: string; extraSystemPrompt?: string };
   sessionKey: string;
   runId: string;
+  anthropicApiKeyOverride?: string;
 }) {
   return {
     message: params.prompt.message,
@@ -54,6 +55,7 @@ function buildAgentCommandInput(params: {
     deliver: false as const,
     messageChannel: "webchat" as const,
     bestEffortDeliver: false as const,
+    anthropicApiKeyOverride: params.anthropicApiKeyOverride,
   };
 }
 
@@ -227,6 +229,11 @@ export async function handleOpenAiHttpRequest(
   const agentId = resolveAgentIdForRequest({ req, model });
   const sessionKey = resolveOpenAiSessionKey({ req, agentId, user });
   const prompt = buildAgentPrompt(payload.messages);
+
+  // BYOK (Bring Your Own Key): Extract custom API key from header if provided
+  const anthropicApiKeyHeader = req.headers["x-anthropic-api-key"];
+  const anthropicApiKeyOverride =
+    typeof anthropicApiKeyHeader === "string" ? anthropicApiKeyHeader.trim() : undefined;
   if (!prompt.message) {
     sendJson(res, 400, {
       error: {
@@ -243,6 +250,7 @@ export async function handleOpenAiHttpRequest(
     prompt,
     sessionKey,
     runId,
+    anthropicApiKeyOverride,
   });
 
   if (!stream) {

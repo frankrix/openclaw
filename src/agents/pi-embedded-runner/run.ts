@@ -316,6 +316,15 @@ export async function runEmbeddedPiAgent(
         });
       }
 
+      // BYOK (Bring Your Own Key): If an API key override is provided via header,
+      // inject it directly into the auth storage. This bypasses the normal auth
+      // profile resolution and allows users to use their own API keys.
+      const byokApiKey = params.anthropicApiKeyOverride?.trim();
+      if (byokApiKey && normalizeProviderId(provider) === "anthropic") {
+        log.info(`[BYOK] Using custom Anthropic API key from request header`);
+        authStorage.setRuntimeApiKey("anthropic", byokApiKey);
+      }
+
       const ctxInfo = resolveContextWindowInfo({
         cfg: params.config,
         provider,
