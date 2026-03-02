@@ -1,0 +1,135 @@
+name: Sync with Upstream OpenClaw
+
+on:
+  schedule:
+    # Run weekly on Mondays at 00:00 UTC
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+    inputs:
+      force_sync:
+        description: 'Force sync even if conflicts detected'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/openclaw/openclaw.git || true
+          git fetch upstream
+
+      - name: Check for upstream changes
+        id: check
+        run: |
+          # Get current upstream main commit
+          UPSTREAM_SHA=$(git rev-parse upstream/main)
+          echo "upstream_sha=$UPSTREAM_SHA" >> $GITHUB_OUTPUT
+
+          # Check if we're already up to date
+          git merge-base --is-ancestor upstream/main HEAD && {
+            echo "Already up to date with upstream"
+            echo "needs_sync=false" >> $GITHUB_OUTPUT
+            exit 0
+          } || {
+            echo "Upstream has new changes"
+            echo "needs_sync=true" >> $GITHUB_OUTPUT
+          }
+
+          # List changed files in our BYOK implementation
+          echo "### Our BYOK changes:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "src/commands/agent/types.ts" >> $GITHUB_STEP_SUMMARY
+          echo "src/gateway/openai-http.ts" >> $GITHUB_STEP_SUMMARY
+          echo "src/commands/agent.ts" >> $GITHUB_STEP_SUMMARY
+          echo "src/agents/pi-embedded-runner/run/params.ts" >> $GITHUB_STEP_SUMMARY
+          echo "src/agents/pi-embedded-runner/run.ts" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Attempt merge
+        id: merge
+        if: steps.check.outputs.needs_sync == 'true'
+        run: |
+          # Try to merge upstream changes
+          if git merge upstream/main --no-edit; then
+            echo "Merge successful!"
+            echo "merge_status=success" >> $GITHUB_OUTPUT
+          else
+            echo "Merge conflicts detected!"
+            echo "merge_status=conflict" >> $GITHUB_OUTPUT
+
+            # Show conflicting files
+            echo "### Conflicting files:" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            git diff --name-only --diff-filter=U >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+            # Abort the merge
+            git merge --abort
+          fi
+
+      - name: Push if successful
+        if: steps.merge.outputs.merge_status == 'success'
+        run: |
+          git push origin main
+          echo "### ✅ Successfully synced with upstream!" >> $GITHUB_STEP_SUMMARY
+          echo "Upstream commit: ${{ steps.check.outputs.upstream_sha }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Create issue on conflict
+        if: steps.merge.outputs.merge_status == 'conflict'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = '⚠️ Upstream sync conflict detected';
+            const body = `
+            The weekly sync with upstream OpenClaw detected merge conflicts.
+
+            **BYOK files that may be affected:**
+            - \`src/commands/agent/types.ts\`
+            - \`src/gateway/openai-http.ts\`
+            - \`src/commands/agent.ts\`
+            - \`src/agents/pi-embedded-runner/run/params.ts\`
+            - \`src/agents/pi-embedded-runner/run.ts\`
+
+            **Action required:** Manually resolve conflicts and merge upstream changes.
+
+            \`\`\`bash
+            git fetch upstream
+            git merge upstream/main
+            # Resolve conflicts
+            git add .
+            git commit
+            git push
+            \`\`\`
+            `;
+
+            // Check if an issue already exists
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'upstream-sync'
+            });
+
+            if (issues.data.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['upstream-sync', 'maintenance']
+              });
+            }
